@@ -146,6 +146,10 @@ where
         Ok(())
     }
 
+    async fn set_lora_sync_word(&mut self, sync_word: u8) -> Result<(), RadioError> {
+        self.write_register(Register::RegSyncWord, sync_word).await
+    }
+
     fn create_modulation_params(
         &self,
         spreading_factor: SpreadingFactor,
@@ -374,6 +378,11 @@ where
 
         self.write_register(Register::RegFifoAddrPtr, 0x00u8).await?;
 
+        // Clear stale IRQ flags before entering Rx. RegIrqFlags is W1C with no
+        // auto-clear on mode change (SX1276 DS §4.1.2.4); covers the listen()
+        // path, which does not call set_irq_params.
+        self.clear_irq_status().await?;
+
         self.write_register(Register::RegOpMode, mode.value()).await
     }
 
@@ -445,6 +454,11 @@ where
     // enable interrupts on DIO pins (sx127x has multiple),
     // and allow interrupts.
     async fn set_irq_params(&mut self, radio_mode: Option<RadioMode>) -> Result<(), RadioError> {
+        // Clear stale IRQ flags before remapping DIO. RegIrqFlags is W1C with no
+        // auto-clear on mode change (SX1276 DS §4.1.2.4); clearing first keeps
+        // it away from a caller's adjacent RegOpMode write.
+        self.write_register(Register::RegIrqFlags, 0xffu8).await?;
+
         match radio_mode {
             Some(RadioMode::Transmit) => {
                 self.write_register(
@@ -501,9 +515,6 @@ where
                 self.write_register(Register::RegDioMapping1, dio_mapping_1).await?;
             }
         }
-
-        // clear all active IRQ flags
-        self.write_register(Register::RegIrqFlags, 0xffu8).await?;
 
         Ok(())
     }

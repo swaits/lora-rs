@@ -182,6 +182,18 @@ where
         self.radio_kind.set_standby().await
     }
 
+    /// Apply a new LoRa sync word to the chip
+    pub async fn set_lora_sync_word(&mut self, sync_word: u8) -> Result<(), RadioError> {
+        self.radio_kind.ensure_ready(self.radio_mode).await?;
+        if self.radio_mode != RadioMode::Standby {
+            self.radio_kind.set_standby().await?;
+            self.radio_mode = RadioMode::Standby;
+        }
+        self.radio_kind.set_lora_sync_word(sync_word).await?;
+        self.sync_word = sync_word;
+        Ok(())
+    }
+
     /// Place the LoRa physical layer in low power mode, specifying cold or
     /// warm start (if chip supports it)
     pub async fn sleep(&mut self, warm_start_if_possible: bool) -> Result<(), RadioError> {
@@ -412,7 +424,13 @@ where
                 .process_irq_event(self.radio_mode, Some(&mut cad_activity_detected), true)
                 .await
             {
-                Ok(Some(IrqState::Done)) => Ok(cad_activity_detected),
+                Ok(Some(IrqState::Done)) => {
+                    // CAD_ONLY exit returns the chip to STDBY_RC on its own; sync
+                    // radio_mode so the next operation starts from a known state.
+                    self.radio_kind.set_standby().await?;
+                    self.radio_mode = RadioMode::Standby;
+                    Ok(cad_activity_detected)
+                }
                 Err(err) => {
                     self.radio_kind.ensure_ready(self.radio_mode).await?;
                     self.radio_kind.set_standby().await?;
